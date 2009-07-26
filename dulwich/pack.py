@@ -843,41 +843,67 @@ def write_pack_data(f, objects, num_objects, window=10):
     """
     recency = list(objects)
     # FIXME: Somehow limit delta depth
-    # FIXME: Make thin-pack optional (its not used when cloning a pack)
+    # TODO: Add support for generating thin packs (i.e packs that delta against
+    #       objects not in the pack)
+
     # Build a list of objects ordered by the magic Linus heuristic
     # This helps us find good objects to diff against us
-    magic = []
-    for obj, path in recency:
-        magic.append( (obj.type, path, 1, -len(obj.as_raw_string()), obj) )
-    magic.sort()
-    # Build a map of objects and their index in magic - so we can find preceeding objects
-    # to diff against
-    offs = {}
-    for i in range(len(magic)):
-        offs[magic[i][4]] = i
+    def magic_heuristic((obj, path)):
+        return (obj.type, path, 1, -len(obj.as_raw_string()), obj)
+
+    magic = sorted(recency, key=magic_heuristic)
+
+    # Find optimal deltas
+    deltas = {}
+    for i, (o, path) in enumerate(magic):
+        t = o.type
+        winner = raw = o.as_raw_string()
+
+        # search the range (i-window, i) for a good object to delta against
+        for j in range(i-window, i):
+            if j < 0 or magic[j][0].type != o.type:
+                continue
+
+            b = magic[j][0]
+            base = b.as_raw_string()
+            delta = create_delta(base, raw)
+            if len(delta) < len(winner):
+                winner = delta
+                deltas[o] = (b, winner)
+
     # Write the pack
     entries = []
+    done = []
+
     f = SHA1Writer(f)
     f.write("PACK")               # Pack header
     f.write(struct.pack(">L", 2)) # Pack version
     f.write(struct.pack(">L", num_objects)) # Number of objects in pack
-    for o, path in recency:
+
+    # Writes an object (and the object we diff against if necessary) to the pack
+    def write_object(o):
+        if o in deltas:
+            base, delta = deltas[o]
+            # This shouldn't happen often
+            if not base in done:
+                write_object(base)
+            raw = base.sha().digest(), delta
+            t = 7
+        else:
+            raw = o.as_raw_string()
+            t = o.type
+
         sha1 = o.sha().digest()
-        orig_t = o.type
-        raw = o.as_raw_string()
-        winner = raw
-        t = orig_t
-        #for i in range(offs[o]-window, window):
-        #    if i < 0 or i >= len(offs): continue
-        #    b = magic[i][4]
-        #    if b.type != orig_t: continue
-        #    base = b.as_raw_string()
-        #    delta = create_delta(base, raw)
-        #    if len(delta) < len(winner):
-        #        winner = delta
-        #        t = 6 if magic[i][2] == 1 else 7
-        offset, crc32 = write_pack_object(f, t, winner)
+        done.append(o)
+        offset, crc32 = write_pack_object(f, t, raw)
         entries.append((sha1, offset, crc32))
+
+    for o, path in recency:
+        if o not in done:
+            write_object(o)
+
+    assert len(done) == num_objects
+
     return entries, f.write_sha()
 
 
