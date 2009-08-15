@@ -955,32 +955,16 @@ def create_delta(base_buf, target_buf):
     out_buf += encode_size(len(target_buf))
     # write out delta opcodes
     seq = difflib.SequenceMatcher(a=base_buf, b=target_buf)
-    for opcode, i1, i2, j1, j2 in seq.get_opcodes():
-        # Git patch opcodes don't care about deletes!
-        #if opcode == "replace" or opcode == "delete":
-        #    pass
-        if opcode == "equal":
-            # If they are equal, unpacker will use data from base_buf
-            # Write out an opcode that says what range to use
-            scratch = ""
-            op = 0x80
-            o = i1
-            for i in range(4):
-                if o & 0xff << i*8:
-                    scratch += chr((o >> i*8) & 0xff)
-                    op |= 1 << i
-            s = i2 - i1
-            for i in range(2):
-                if s & 0xff << i*8:
-                    scratch += chr((s >> i*8) & 0xff)
-                    op |= 1 << (4+i)
-            out_buf += chr(op)
-            out_buf += scratch
-        if opcode == "replace" or opcode == "insert":
-            # If we are replacing a range or adding one, then we just
+
+    # the offset we reached in the target buffer
+    off = 0
+    for ai, bj, size in seq.get_matching_blocks():
+        # until now, we dealed with target_buf[:off]
+        if bj > off:
+            # target_buf[off:bj] is doesn't match in base_buf, so we just
             # output it to the stream (prefixed by its size)
-            s = j2 - j1
-            o = j1
+            s = bj - off
+            o = off
             while s > 127:
                 out_buf += chr(127)
                 out_buf += target_buf[o:o+127]
@@ -988,6 +972,26 @@ def create_delta(base_buf, target_buf):
                 o += 127
             out_buf += chr(s)
             out_buf += target_buf[o:o+s]
+
+        off = bj + size
+        # the last matching block is a sentinel with size 0
+        if size:
+            # If they are equal, unpacker will use data from base_buf
+            # Write out an opcode that says what range to use
+            scratch = ""
+            op = 0x80
+            o = ai
+            for i in range(4):
+                if o & 0xff << i*8:
+                    scratch += chr((o >> i*8) & 0xff)
+                    op |= 1 << i
+            s = size
+            for i in range(2):
+                if s & 0xff << i*8:
+                    scratch += chr((s >> i*8) & 0xff)
+                    op |= 1 << (4+i)
+            out_buf += chr(op)
+            out_buf += scratch
     return out_buf
 
 
