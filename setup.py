@@ -20,6 +20,8 @@ ext_modules = [
               include_dirs=include_dirs),
     Extension('dulwich._pack', ['dulwich/_pack.c'],
               include_dirs=include_dirs),
+    Extension('dulwich.diff', ['dulwich/diff.c'],
+              include_dirs=include_dirs),
     ]
 
 try:

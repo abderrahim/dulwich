@@ -1248,5 +1248,6 @@ class Pack(object):
 
 try:
     from dulwich._pack import apply_delta, bisect_find_sha
+    from dulwich.diff import get_matching_blocks
 except ImportError:
     pass
