@@ -841,35 +841,68 @@ def write_pack_data(f, objects, window=10):
     :param objects: List of objects to write (tuples with object and path)
     :return: List with (name, offset, crc32 checksum) entries, pack checksum
     """
-    recency = list(objects)
     # FIXME: Somehow limit delta depth
     # TODO: Add support for generating thin packs (i.e packs that delta against
     #       objects not in the pack)
 
-    # Build a list of objects ordered by the magic Linus heuristic
-    # This helps us find good objects to diff against us
-    def magic_heuristic((obj, path)):
-        return (obj.type, path, 1, -len(obj.as_raw_string()), obj)
-
-    magic = sorted(recency, key=magic_heuristic)
+    # The following assumes we have an object store so we can try to reuse
+    # existing deltas, and in order not to store all objects uncompressed
+    # in memory (which can use up much memory) but this causes circular imports
+    from object_store import ObjectStoreIterator, MemoryObjectStore
+    if not isinstance(objects, ObjectStoreIterator):
+        objects = list(objects)
+        mstore = MemoryObjectStore()
+        mstore.add_objects(objects)
+        objects = mstore.iter_shas([(obj.id, path) for (obj, path) in objects])
 
     # Find optimal deltas
     deltas = {}
-    for i, (o, path) in enumerate(magic):
-        t = o.type
-        winner = raw = o.as_raw_string()
+
+    recency = list(objects.itershas())
+
+    get_raw = objects.store.get_raw
+
+    # if we already have the object as a delta, use that
+    for p in objects.store.packs:
+        for (sha, path) in recency:
+            if sha not in p:
+                continue
+
+            delta = p.get_as_delta(sha)
+            if delta:
+                deltas[sha] = delta
+
+
+    # Build a list of objects ordered by the magic Linus heuristic
+    # This helps us find good objects to diff against us
+    def magic_heuristic((obj, path)):
+        type, raw = get_raw(obj)
+        return (type, obj in deltas, path, 1, -len(raw))
+
+    magic = sorted(recency, key=magic_heuristic)
+
+    for i, (sha, path) in enumerate(magic):
+        if sha in deltas:
+            continue
+
+        t, raw = get_raw(sha)
+        winner = raw
 
         # search the range (i-window, i) for a good object to delta against
         for j in range(i-window, i):
-            if j < 0 or magic[j][0].type != o.type:
+            if j < 0:
                 continue
 
-            b = magic[j][0]
-            base = b.as_raw_string()
+            base_sha = magic[j][0]
+            btype, base = objects.store.get_raw(base_sha)
+            # different object types never delta
+            if btype != t:
+                continue
+
             delta = create_delta(base, raw)
             if len(delta) < len(winner):
                 winner = delta
-                deltas[o] = (b, winner)
+                deltas[sha] = (base_sha, winner)
 
     # Write the pack
     entries = []
@@ -881,22 +914,20 @@ def write_pack_data(f, objects, window=10):
     f.write(struct.pack(">L", len(recency))) # Number of objects in pack
 
     # Writes an object (and the object we diff against if necessary) to the pack
-    def write_object(o):
-        if o in deltas:
-            base, delta = deltas[o]
+    def write_object(sha):
+        if sha in deltas:
+            base, delta = deltas[sha]
             # This shouldn't happen often
             if not base in done:
                 write_object(base)
-            raw = base.sha().digest(), delta
+            raw = hex_to_sha(base), delta
             t = 7
         else:
-            raw = o.as_raw_string()
-            t = o.type
+            t, raw = objects.store.get_raw(sha)
 
-        sha1 = o.sha().digest()
-        done.append(o)
+        done.append(sha)
         offset, crc32 = write_pack_object(f, t, raw)
-        entries.append((sha1, offset, crc32))
+        entries.append((hex_to_sha(sha), offset, crc32))
 
     for o, path in recency:
         if o not in done:
@@ -1180,6 +1211,19 @@ class Pack(object):
         if resolve_ref is None:
             resolve_ref = self.get_raw
         return self.data.resolve_object(offset, obj_type, obj, resolve_ref)
+
+    def get_as_delta(self, sha1):
+        offset = self.index.object_index(sha1)
+        obj_type, obj = self.data.get_object_at(offset)
+        if obj_type == 7:
+            base, delta = obj
+            return sha_to_hex(base), delta
+        elif obj_type == 6:
+            (delta_offset, delta) = obj
+            boffset = offset-delta_offset
+            btype, base = self.data.get_object_at(boffset)
+            return ShaFile.from_raw_string(
+                    *self.data.resolve_object(boffset, btype, base, self.get_raw)).id, delta
 
     def __getitem__(self, sha1):
         """Retrieve the specified SHA1."""
