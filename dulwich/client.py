@@ -114,8 +114,7 @@ class GitClient(object):
         if not want:
             return new_refs
         objects = generate_pack_contents(have, want)
-        (entries, sha) = write_pack_data(self.proto.write_file(), objects, 
-                                         len(objects))
+        (entries, sha) = write_pack_data(self.proto.write_file(), objects)
         
         # read the final confirmation sha
         client_sha = self.proto.read(20)

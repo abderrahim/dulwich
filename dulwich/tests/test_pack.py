@@ -195,8 +195,7 @@ class TestPack(PackTests):
     def test_copy(self):
         origpack = self.get_pack(pack1_sha)
         self.assertEquals(True, origpack.index.check())
-        write_pack("Elch", [(x, "") for x in origpack.iterobjects()], 
-            len(origpack))
+        write_pack("Elch", [(x, "") for x in origpack.iterobjects()])
         newpack = Pack("Elch")
         self.assertEquals(origpack, newpack)
         self.assertEquals(True, newpack.index.check())

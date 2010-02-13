@@ -818,7 +818,7 @@ def write_pack_object(f, type, object):
     return (offset, (zlib.crc32(packed_data) & 0xffffffff))
 
 
-def write_pack(filename, objects, num_objects):
+def write_pack(filename, objects):
     """Write a new pack data file.
 
     :param filename: Path to the new pack file (without .pack extension)
@@ -827,14 +827,14 @@ def write_pack(filename, objects, num_objects):
     """
     f = GitFile(filename + ".pack", 'wb')
     try:
-        entries, data_sum = write_pack_data(f, objects, num_objects)
+        entries, data_sum = write_pack_data(f, objects)
     finally:
         f.close()
     entries.sort()
     write_pack_index_v2(filename + ".idx", entries, data_sum)
 
 
-def write_pack_data(f, objects, num_objects, window=10):
+def write_pack_data(f, objects, window=10):
     """Write a new pack file.
 
     :param filename: The filename of the new pack file.
@@ -878,7 +878,7 @@ def write_pack_data(f, objects, num_objects, window=10):
     f = SHA1Writer(f)
     f.write("PACK")               # Pack header
     f.write(struct.pack(">L", 2)) # Pack version
-    f.write(struct.pack(">L", num_objects)) # Number of objects in pack
+    f.write(struct.pack(">L", len(recency))) # Number of objects in pack
 
     # Writes an object (and the object we diff against if necessary) to the pack
     def write_object(o):
@@ -901,8 +901,6 @@ def write_pack_data(f, objects, num_objects, window=10):
     for o, path in recency:
         if o not in done:
             write_object(o)
-
-    assert len(done) == num_objects
 
     return entries, f.write_sha()
 

@@ -317,7 +317,7 @@ class PackBasedObjectStore(BaseObjectStore):
             # Don't bother writing an empty pack file
             return
         f, commit = self.add_pack()
-        write_pack_data(f, objects, len(objects))
+        write_pack_data(f, objects)
         commit()
 
 
@@ -390,8 +390,7 @@ class DiskObjectStore(PackBasedObjectStore):
         # Write a full pack version
         temppath = os.path.join(self.pack_dir, 
             sha_to_hex(urllib2.randombytes(20))+".temppack")
-        write_pack(temppath, ((o, None) for o in p.iterobjects(self.get_raw)), 
-                len(p))
+        write_pack(temppath, ((o, None) for o in p.iterobjects(self.get_raw)))
         pack_sha = load_pack_index(temppath+".idx").objects_sha1()
         newbasename = os.path.join(self.pack_dir, "pack-%s" % pack_sha)
         os.rename(temppath+".pack", newbasename+".pack")
