@@ -959,6 +959,13 @@ def write_pack_index_v1(filename, entries, pack_checksum):
     f.write(pack_checksum)
     f.close()
 
+_seq = None
+def get_matching_blocks(base_buf, target_buf):
+    global _seq
+    if not _seq:
+        _seq = difflib.SequenceMatcher()
+    _seq.set_seqs(base_buf, target_buf)
+    return _seq.get_matching_blocks()
 
 def create_delta(base_buf, target_buf):
     """Use python difflib to work out how to transform base_buf to target_buf.
@@ -983,11 +990,10 @@ def create_delta(base_buf, target_buf):
     out_buf += encode_size(len(base_buf))
     out_buf += encode_size(len(target_buf))
     # write out delta opcodes
-    seq = difflib.SequenceMatcher(a=base_buf, b=target_buf)
 
     # the offset we reached in the target buffer
     off = 0
-    for ai, bj, size in seq.get_matching_blocks():
+    for ai, bj, size in get_matching_blocks(base_buf, target_buf):
         # until now, we dealed with target_buf[:off]
         if bj > off:
             # target_buf[off:bj] is doesn't match in base_buf, so we just
